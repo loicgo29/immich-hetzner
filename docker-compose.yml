@@ -3,14 +3,16 @@ version: '3.8'
 services:
   # PostgreSQL database for Immich (with pgvector)
   postgres:
-    image: ankane/pgvector:16
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     container_name: immich-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-immich}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-immich}
       POSTGRES_DB: ${DB_NAME:-immich}
-      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=en_US.UTF-8
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-pgvector.sql:/docker-entrypoint-initdb.d/01-init-pgvector.sql

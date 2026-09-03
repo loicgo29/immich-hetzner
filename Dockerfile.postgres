@@ -1,0 +1,12 @@
+FROM postgres:16-alpine
+
+RUN apk add --no-cache \
+    build-base \
+    postgresql-dev \
+    git \
+    && git clone --branch v0.1.4 https://github.com/pgvector/pgvector.git /pgvector \
+    && cd /pgvector \
+    && make \
+    && make install \
+    && rm -rf /pgvector \
+    && apk del build-base git
