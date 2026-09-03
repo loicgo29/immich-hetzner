@@ -118,6 +118,7 @@ test_connectivity() {
   # Test Storage Box
   console "→ Storage Box ($STORAGE_BOX_HOST)…"
   if ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" "df" > /dev/null 2>&1; then
     success "Storage Box accessible"
     log_cmd "Storage Box SSH Test" "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST df"
