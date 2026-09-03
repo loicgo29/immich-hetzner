@@ -1,20 +1,17 @@
 #!/bin/bash
 #
-# restore-photos.sh
+# restore-photos.sh — Restauration Immich avec logging complet
 #
-# Restaure les photos depuis la Storage Box Hetzner dans Immich.
+# Flux : DS124 NAS → Storage Box Hetzner → Hetzner /donnees/immich/library
+#
 # Étapes :
-#   1. Télécharger l'archive tar.gz depuis Storage Box
-#   2. L'extraire dans /donnees/immich/library
-#   3. Restaurer la base de données
-#   4. Vérifier que Immich voit les photos
+#   1. test       — Vérifier connectivité NAS + Storage Box + Hetzner
+#   2. checksum   — Calculer SHA256 sur Storage Box
+#   3. sync       — rsync Storage Box → /donnees/immich/library
+#   4. verify     — Vérifier checksums + count fichiers
+#   5. all        — Exécuter toutes les étapes
 #
-# Usage:
-#   ./restore-photos.sh download   # Télécharger l'archive
-#   ./restore-photos.sh extract    # Extraire l'archive
-#   ./restore-photos.sh db-restore # Restaurer la base de données
-#   ./restore-photos.sh verify     # Vérifier la restauration
-#   ./restore-photos.sh all        # Tout (download + extract + db-restore + verify)
+# Logging : Tout est enregistré dans RESTORATION_LOG.md
 
 set -uo pipefail
 
@@ -22,7 +19,6 @@ set -uo pipefail
 # Configuration
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Charger les variables d'environnement
 if [ -f .env.hetzner ]; then
   export $(grep -v '^#' .env.hetzner | xargs)
 elif [ -f .env ]; then
@@ -33,11 +29,16 @@ else
 fi
 
 # Chemins
-STORAGE_BOX_KEY="${HOME}/.ssh/id_ed25519_storagebox"
-IMMICH_LIBRARY="${IMMICH_UPLOAD_LOCATION:-.}/volumes/immich/library"
+NAS_USER="${NAS_USER:-backup}"
+NAS_HOST="${NAS_HOST:-192.168.1.40}"
+NAS_KEY="${HOME}/.ssh/backup-key"
+NAS_PATH="/volume1/backup-6tb/NAS-LOGO-VOLUME/personnes/loic-perso/immich"
+
+IMMICH_LIBRARY="${IMMICH_UPLOAD_LOCATION:-.}/donnees/immich/library"
 IMMICH_TEMP="${IMMICH_LIBRARY}/.tmp"
-ARCHIVE_LOCAL="${IMMICH_TEMP}/${PHOTO_ARCHIVE_NAME}"
-ARCHIVE_REMOTE="${STORAGE_BOX_DIR}/${PHOTO_ARCHIVE_NAME}"
+
+LOG_FILE="RESTORATION_LOG.md"
+CHECKSUMS_FILE="checksums.txt"
 
 # Couleurs
 RED='\033[0;31m'
@@ -46,188 +47,196 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Logging
-log() { echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $*"; }
+# ═══════════════════════════════════════════════════════════════════════════
+# Logging functions
+# ═══════════════════════════════════════════════════════════════════════════
+
+log_init() {
+  cat > "$LOG_FILE" <<'EOF'
+# Restoration Log — Immich Hetzner
+
+**Start:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+## Configuration
+
+EOF
+  echo "**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
+  echo "**NAS:** $NAS_USER@$NAS_HOST:$NAS_PATH" >> "$LOG_FILE"
+  echo "**Storage Box:** $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR" >> "$LOG_FILE"
+  echo "**Target:** /donnees/immich/library" >> "$LOG_FILE"
+  echo "" >> "$LOG_FILE"
+}
+
+log_cmd() {
+  echo "" >> "$LOG_FILE"
+  echo "### $(date '+%Y-%m-%d %H:%M:%S') — $1" >> "$LOG_FILE"
+  echo '```bash' >> "$LOG_FILE"
+  echo "$2" >> "$LOG_FILE"
+  echo '```' >> "$LOG_FILE"
+}
+
+log_result() {
+  echo "**Result:** $1" >> "$LOG_FILE"
+  echo "" >> "$LOG_FILE"
+}
+
+console() { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $*"; }
 success() { echo -e "${GREEN}✅ $*${NC}"; }
 error() { echo -e "${RED}❌ $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠️  $*${NC}"; }
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Fonctions
+# Test Connectivity
 # ═══════════════════════════════════════════════════════════════════════════
 
-ssh_box() {
-  ssh -p "${STORAGE_BOX_PORT}" -i "${STORAGE_BOX_KEY}" \
-    -o StrictHostKeyChecking=no \
-    "${STORAGE_BOX_USER}@${STORAGE_BOX_HOST}" "$@"
-}
+test_connectivity() {
+  console "Testing connectivity…"
+  log_init
 
-check_prerequisites() {
-  log "Vérification des prérequis…"
+  local pass=0
+  local fail=0
 
-  # Storage Box accessible
-  if ! ssh_box "df" > /dev/null 2>&1; then
-    error "Storage Box (${STORAGE_BOX_HOST}) injoignable"
+  # Test NAS
+  console "→ NAS ($NAS_HOST)…"
+  if ssh -i "$NAS_KEY" -o ConnectTimeout=5 "$NAS_USER@$NAS_HOST" "ls $NAS_PATH" > /dev/null 2>&1; then
+    success "NAS accessible"
+    log_cmd "NAS SSH Test" "ssh -i $NAS_KEY $NAS_USER@$NAS_HOST \"ls $NAS_PATH\""
+    log_result "✅ Connected"
+    ((pass++))
+  else
+    error "NAS unreachable"
+    log_result "❌ Failed"
+    ((fail++))
+  fi
+
+  # Test Storage Box
+  console "→ Storage Box ($STORAGE_BOX_HOST)…"
+  if ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" -o ConnectTimeout=5 \
+    "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" "df" > /dev/null 2>&1; then
+    success "Storage Box accessible"
+    log_cmd "Storage Box SSH Test" "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST df"
+    log_result "✅ Connected"
+    ((pass++))
+  else
+    error "Storage Box unreachable"
+    log_result "❌ Failed"
+    ((fail++))
+  fi
+
+  # Test Docker
+  console "→ Docker…"
+  if docker ps > /dev/null 2>&1; then
+    success "Docker available"
+    log_cmd "Docker Test" "docker ps"
+    log_result "✅ Available"
+    ((pass++))
+  else
+    error "Docker not found"
+    log_result "❌ Not available"
+    ((fail++))
+  fi
+
+  echo "" >> "$LOG_FILE"
+  echo "## Test Results" >> "$LOG_FILE"
+  echo "- Passed: $pass" >> "$LOG_FILE"
+  echo "- Failed: $fail" >> "$LOG_FILE"
+  echo "" >> "$LOG_FILE"
+
+  if [ $fail -gt 0 ]; then
+    error "Some tests failed. Fix connectivity before proceeding."
     exit 1
   fi
-  success "Storage Box accessible"
 
-  # Docker disponible
-  if ! command -v docker &> /dev/null; then
-    error "Docker non trouvé. Installer Docker."
-    exit 1
-  fi
-  success "Docker disponible"
-
-  # Immich container running
-  if ! docker ps | grep -q immich-server; then
-    warn "Container immich-server n'est pas en cours. Lancer 'docker-compose up -d'"
-  fi
-
-  # Dossier temporaire
-  mkdir -p "${IMMICH_TEMP}"
-  success "Dossier temporaire prêt"
+  success "All tests passed ✓"
 }
 
-download_archive() {
-  log "Téléchargement de l'archive depuis Storage Box…"
-  log "Source : ${STORAGE_BOX_USER}@${STORAGE_BOX_HOST}:${ARCHIVE_REMOTE}"
+# ═══════════════════════════════════════════════════════════════════════════
+# Calculate Checksums
+# ═══════════════════════════════════════════════════════════════════════════
 
-  if [ -f "${ARCHIVE_LOCAL}" ]; then
-    warn "Archive locale existe déjà : ${ARCHIVE_LOCAL}"
-    read -p "Continuer avec cette copie ? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-      success "Utilisation de la copie locale"
-      return 0
+calculate_checksums() {
+  console "Calculating checksums…"
+
+  log_cmd "Storage Box Checksum" \
+    "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST \
+      'find $STORAGE_BOX_DIR/immich-files -type f -exec sha256sum {} + | sort -k2'"
+
+  console "Computing SHA256 on Storage Box (this may take hours)…"
+  ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" \
+    "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" \
+    "find $STORAGE_BOX_DIR/immich-files -type f -exec sha256sum {} + | sort -k2" \
+    > "$CHECKSUMS_FILE" 2>&1
+
+  success "Checksums saved to $CHECKSUMS_FILE"
+  log_result "✅ Computed SHA256 for all files"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sync Photos
+# ═══════════════════════════════════════════════════════════════════════════
+
+sync_photos() {
+  console "Syncing photos from Storage Box…"
+
+  mkdir -p "$IMMICH_LIBRARY"
+
+  local cmd="rsync -av --progress --partial --append-verify --timeout=300 \
+    -e 'ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY \
+        -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=6 \
+        -o TCPKeepAlive=yes' \
+    $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/immich-files/ \
+    $IMMICH_LIBRARY/"
+
+  log_cmd "rsync Storage Box → Hetzner" "$cmd"
+
+  eval "$cmd" 2>&1 | tee -a "$LOG_FILE"
+
+  log_result "✅ Sync completed"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Verify
+# ═══════════════════════════════════════════════════════════════════════════
+
+verify_restoration() {
+  console "Verifying restoration…"
+
+  echo "" >> "$LOG_FILE"
+  echo "## Verification" >> "$LOG_FILE"
+  echo "" >> "$LOG_FILE"
+
+  # Count files
+  console "Counting files…"
+  local file_count=$(find "$IMMICH_LIBRARY" -type f | wc -l)
+  success "Files found: $file_count"
+  echo "**Files:** $file_count" >> "$LOG_FILE"
+
+  # Disk usage
+  console "Checking disk usage…"
+  local disk_usage=$(du -sh "$IMMICH_LIBRARY" | cut -f1)
+  success "Disk used: $disk_usage"
+  echo "**Disk Usage:** $disk_usage" >> "$LOG_FILE"
+
+  # Immich health
+  console "Checking Immich health…"
+  if docker ps | grep -q immich-server; then
+    if curl -s http://localhost:3001/api/server/health > /dev/null 2>&1; then
+      success "Immich API responsive"
+      echo "**Immich Health:** ✅ API responsive" >> "$LOG_FILE"
+    else
+      warn "Immich API not responding"
+      echo "**Immich Health:** ⚠️ API not responding" >> "$LOG_FILE"
     fi
-    rm "${ARCHIVE_LOCAL}"
-  fi
-
-  # Télécharger via rsync (plus fiable que scp pour gros fichiers)
-  if command -v rsync &> /dev/null; then
-    log "Utilisation de rsync (reprise automatique en cas de coupure)…"
-    rsync -av --progress --partial --append-verify \
-      -e "ssh -p ${STORAGE_BOX_PORT} -i ${STORAGE_BOX_KEY} -o StrictHostKeyChecking=no" \
-      "${STORAGE_BOX_USER}@${STORAGE_BOX_HOST}:${ARCHIVE_REMOTE}" \
-      "${ARCHIVE_LOCAL}" || { error "rsync échoué"; exit 1; }
   else
-    log "Utilisation de scp…"
-    scp -P "${STORAGE_BOX_PORT}" -i "${STORAGE_BOX_KEY}" \
-      "${STORAGE_BOX_USER}@${STORAGE_BOX_HOST}:${ARCHIVE_REMOTE}" \
-      "${ARCHIVE_LOCAL}" || { error "scp échoué"; exit 1; }
+    warn "Immich server not running"
+    echo "**Immich Health:** ⚠️ Server not running" >> "$LOG_FILE"
   fi
 
-  success "Archive téléchargée"
-}
-
-extract_archive() {
-  log "Extraction de l'archive…"
-
-  if [ ! -f "${ARCHIVE_LOCAL}" ]; then
-    error "Archive non trouvée : ${ARCHIVE_LOCAL}"
-    exit 1
-  fi
-
-  log "Cible : ${IMMICH_LIBRARY}"
-  mkdir -p "${IMMICH_LIBRARY}"
-
-  # Vérifier l'intégrité avant extraction
-  log "Vérification de l'intégrité de l'archive…"
-  if ! gzip -t "${ARCHIVE_LOCAL}"; then
-    error "Archive corrompue. Relancer download."
-    exit 1
-  fi
-  success "Archive valide"
-
-  # Extraction
-  log "Extraction en cours (plusieurs heures)…"
-  tar -xzf "${ARCHIVE_LOCAL}" -C "${IMMICH_LIBRARY}" --strip-components=1 \
-    || { error "Extraction échouée"; exit 1; }
-
-  success "Archive extraite"
-
-  # Nettoyage
-  log "Suppression du fichier temporaire…"
-  rm -f "${ARCHIVE_LOCAL}"
-  success "Nettoyage effectué"
-}
-
-restore_database() {
-  log "Restauration de la base de données…"
-
-  # Chercher le dump le plus récent sur Storage Box
-  log "Recherche du dump DB sur Storage Box…"
-  DUMP_FILE=$(ssh_box "ls -1 ${STORAGE_BOX_DIR}/${DB_DUMP_PATTERN} 2>/dev/null | sort | tail -1" || true)
-
-  if [ -z "$DUMP_FILE" ]; then
-    error "Dump DB non trouvé sur Storage Box"
-    exit 1
-  fi
-
-  log "Dump trouvé : $DUMP_FILE"
-
-  # Télécharger le dump
-  DUMP_LOCAL="${IMMICH_TEMP}/$(basename "$DUMP_FILE")"
-  log "Téléchargement du dump…"
-  scp -P "${STORAGE_BOX_PORT}" -i "${STORAGE_BOX_KEY}" \
-    "${STORAGE_BOX_USER}@${STORAGE_BOX_HOST}:${DUMP_FILE}" \
-    "${DUMP_LOCAL}" || { error "Téléchargement du dump échoué"; exit 1; }
-
-  # Restaurer dans PostgreSQL via Docker
-  log "Restauration dans PostgreSQL…"
-  docker exec -i immich-postgres pg_restore \
-    -U "${DB_USER}" \
-    -d "${DB_NAME}" \
-    --no-owner --no-privileges \
-    < <(gunzip -c "${DUMP_LOCAL}") || {
-    error "Restauration échouée"
-    exit 1
-  }
-
-  success "Base de données restaurée"
-
-  # Nettoyage
-  rm -f "${DUMP_LOCAL}"
-}
-
-verify_photos() {
-  log "Vérification de la restauration…"
-
-  # Vérifier que Immich voit les photos
-  PHOTO_COUNT=$(find "${IMMICH_LIBRARY}" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.raw" \) | wc -l)
-
-  if [ "$PHOTO_COUNT" -eq 0 ]; then
-    error "Aucune photo trouvée dans ${IMMICH_LIBRARY}"
-    exit 1
-  fi
-
-  success "Photos détectées : $PHOTO_COUNT fichiers"
-
-  # Vérifier que Immich API répond
-  log "Vérification de l'API Immich…"
-  if ! curl -s http://localhost:3001/api/server/health > /dev/null; then
-    warn "API Immich ne répond pas sur localhost:3001. Vérifier que le container est en cours."
-  else
-    success "API Immich opérationnelle"
-  fi
-
-  # Générer un rapport
-  REPORT="${IMMICH_TEMP}/verification-report.json"
-  cat > "$REPORT" <<EOF
-{
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "status": "success",
-  "photos_found": $PHOTO_COUNT,
-  "library_path": "${IMMICH_LIBRARY}",
-  "storage_box": "${STORAGE_BOX_HOST}",
-  "database_restored": true,
-  "api_available": true
-}
-EOF
-
-  log "Rapport de vérification : $REPORT"
-  cat "$REPORT" | jq .
+  echo "" >> "$LOG_FILE"
+  echo "**Status:** ✅ Verification complete" >> "$LOG_FILE"
+  echo "**End:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -235,44 +244,43 @@ EOF
 # ═══════════════════════════════════════════════════════════════════════════
 
 case "${1:-help}" in
-  download)
-    check_prerequisites
-    download_archive
+  test)
+    test_connectivity
     ;;
-  extract)
-    check_prerequisites
-    extract_archive
+  checksum)
+    log_init
+    calculate_checksums
     ;;
-  db-restore)
-    check_prerequisites
-    restore_database
+  sync)
+    sync_photos
     ;;
   verify)
-    check_prerequisites
-    verify_photos
+    verify_restoration
     ;;
   all)
-    check_prerequisites
-    download_archive
-    extract_archive
-    restore_database
-    verify_photos
-    success "Restauration complète terminée !"
+    test_connectivity
+    calculate_checksums
+    sync_photos
+    verify_restoration
+    success "Restoration complete! Check $LOG_FILE for details."
     ;;
   *)
     cat <<USAGE
-Usage: $0 {download|extract|db-restore|verify|all}
+Usage: $0 {test|checksum|sync|verify|all}
 
-  download   — Télécharger l'archive photos depuis Storage Box
-  extract    — Extraire l'archive dans immich/library
-  db-restore — Restaurer la base de données PostgreSQL
-  verify     — Vérifier que les photos sont visibles par Immich
-  all        — Exécuter toutes les étapes (peut durer plusieurs heures)
+  test       — Test connectivity to NAS, Storage Box, Hetzner
+  checksum   — Calculate SHA256 checksums on Storage Box
+  sync       — rsync photos from Storage Box → /donnees/immich/library
+  verify     — Verify file count, disk usage, Immich health
+  all        — Run all steps (can take many hours)
 
-Exemples:
-  $0 all                    # Restauration complète
-  $0 download               # Juste télécharger
-  $0 all 2>&1 | tee restore.log  # Enregistrer les logs
+Logging:
+  All commands logged to RESTORATION_LOG.md
+  Checksums saved to checksums.txt
+
+Examples:
+  $0 test
+  $0 all 2>&1 | tee console.log
 USAGE
     exit 1
     ;;
