@@ -40,7 +40,7 @@ NAS_PATH="/volume1/backup-6tb/NAS-LOGO-VOLUME/personnes/loic-perso/immich"
 
 STORAGE_BOX_KEY="${STORAGE_BOX_SSH_KEY:-${HOME}/.ssh/id_ed25519_storagebox}"
 
-IMMICH_LIBRARY="${IMMICH_UPLOAD_LOCATION:-.}/donnees/immich/library"
+IMMICH_LIBRARY="${IMMICH_UPLOAD_LOCATION:-.}"
 IMMICH_TEMP="${IMMICH_LIBRARY}/.tmp"
 
 LOG_FILE="RESTORATION_LOG.md"
