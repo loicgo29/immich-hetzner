@@ -36,7 +36,7 @@ fi
 NAS_USER="${NAS_USER:-backup}"
 NAS_HOST="${NAS_HOST:-192.168.1.40}"
 NAS_KEY="${NAS_SSH_KEY:-${HOME}/.ssh/backup-key}"
-NAS_PATH="/volume1/backup-6tb/NAS-LOGO-VOLUME/personnes/loic-perso/immich"
+NAS_PATH="${NAS_PATH:-/volume1/backup-6tb/NAS-LOGO-VOLUME/personnes/loic-perso/immich}"
 
 STORAGE_BOX_KEY="${STORAGE_BOX_SSH_KEY:-${HOME}/.ssh/id_ed25519_storagebox}"
 
@@ -162,22 +162,21 @@ test_connectivity() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 calculate_checksums() {
-  console "Calculating checksum for archive…"
+  console "Calculating checksums of files on NAS…"
 
-  local archive_remote="$STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME"
+  log_cmd "NAS Checksums" \
+    "ssh -i $NAS_KEY $NAS_USER@$NAS_HOST \
+      'find $NAS_PATH -type f -exec sha256sum {} + | sort -k2'"
 
-  log_cmd "Storage Box Archive Checksum" \
-    "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST \
-      'sha256sum $STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME'"
-
-  console "Computing SHA256 of archive on Storage Box…"
-  ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" \
-    "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" \
-    "sha256sum $STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME" \
+  console "Computing SHA256 on NAS (this may take hours)…"
+  ssh -i "$NAS_KEY" \
+    "$NAS_USER@$NAS_HOST" \
+    "find $NAS_PATH -type f -exec sha256sum {} + | sort -k2" \
     > "$CHECKSUMS_FILE" 2>&1
 
-  success "Archive checksum saved to $CHECKSUMS_FILE"
-  log_result "✅ Checksum: $(cat $CHECKSUMS_FILE | cut -d' ' -f1)"
+  success "Checksums saved to $CHECKSUMS_FILE"
+  local checksum_count=$(wc -l < "$CHECKSUMS_FILE")
+  log_result "✅ Computed SHA256 for $checksum_count files"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -185,51 +184,24 @@ calculate_checksums() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 sync_photos() {
-  console "Downloading and extracting photos from Storage Box…"
+  console "Syncing photos from NAS DS124…"
 
   mkdir -p "$IMMICH_LIBRARY"
-  mkdir -p "$IMMICH_TEMP"
 
-  local archive_remote="$STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME"
-  local archive_local="$IMMICH_TEMP/$PHOTO_ARCHIVE_NAME"
+  local cmd="rsync -av --progress --partial --append-verify --timeout=300 \
+    -e 'ssh -i $NAS_KEY \
+        -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=6 \
+        -o TCPKeepAlive=yes' \
+    $NAS_USER@$NAS_HOST:$NAS_PATH/ \
+    $IMMICH_LIBRARY/"
 
-  # Download archive
-  console "→ Downloading $PHOTO_ARCHIVE_NAME ($(numfmt --to=iec $PHOTO_ARCHIVE_SIZE 2>/dev/null || echo $PHOTO_ARCHIVE_SIZE) bytes)…"
+  log_cmd "rsync NAS DS124 → Hetzner" "$cmd"
 
-  local scp_cmd="scp -P $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY \
-    -o StrictHostKeyChecking=no \
-    -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=6 \
-    $archive_remote \
-    $archive_local"
+  eval "$cmd" 2>&1 | tee -a "$LOG_FILE"
 
-  log_cmd "Download archive" "$scp_cmd"
-
-  if eval "$scp_cmd" 2>&1 | tee -a "$LOG_FILE"; then
-    success "Archive downloaded"
-  else
-    error "Download failed"
-    exit 1
-  fi
-
-  # Extract archive
-  console "→ Extracting to $IMMICH_LIBRARY…"
-  local tar_cmd="tar -xzf $archive_local -C $IMMICH_LIBRARY"
-
-  log_cmd "Extract archive" "$tar_cmd"
-
-  if eval "$tar_cmd" 2>&1 | tee -a "$LOG_FILE"; then
-    success "Archive extracted"
-  else
-    error "Extraction failed"
-    exit 1
-  fi
-
-  # Cleanup
-  console "→ Cleaning up temporary files…"
-  rm -f "$archive_local"
-
-  log_result "✅ Download and extraction completed"
+  log_result "✅ Sync completed"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
