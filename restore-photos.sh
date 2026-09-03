@@ -162,20 +162,22 @@ test_connectivity() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 calculate_checksums() {
-  console "Calculating checksums…"
+  console "Calculating checksum for archive…"
 
-  log_cmd "Storage Box Checksum" \
+  local archive_remote="$STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME"
+
+  log_cmd "Storage Box Archive Checksum" \
     "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST \
-      'find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2'"
+      'sha256sum $STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME'"
 
-  console "Computing SHA256 on Storage Box (this may take hours)…"
+  console "Computing SHA256 of archive on Storage Box…"
   ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" \
     "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" \
-    "find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2" \
+    "sha256sum $STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME" \
     > "$CHECKSUMS_FILE" 2>&1
 
-  success "Checksums saved to $CHECKSUMS_FILE"
-  log_result "✅ Computed SHA256 for all files"
+  success "Archive checksum saved to $CHECKSUMS_FILE"
+  log_result "✅ Checksum: $(cat $CHECKSUMS_FILE | cut -d' ' -f1)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -183,24 +185,51 @@ calculate_checksums() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 sync_photos() {
-  console "Syncing photos from Storage Box…"
+  console "Downloading and extracting photos from Storage Box…"
 
   mkdir -p "$IMMICH_LIBRARY"
+  mkdir -p "$IMMICH_TEMP"
 
-  local cmd="rsync -av --progress --partial --append-verify --timeout=300 \
-    -e 'ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY \
-        -o StrictHostKeyChecking=no \
-        -o ServerAliveInterval=30 \
-        -o ServerAliveCountMax=6 \
-        -o TCPKeepAlive=yes' \
-    $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/ \
-    $IMMICH_LIBRARY/"
+  local archive_remote="$STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/$PHOTO_ARCHIVE_NAME"
+  local archive_local="$IMMICH_TEMP/$PHOTO_ARCHIVE_NAME"
 
-  log_cmd "rsync Storage Box → Hetzner" "$cmd"
+  # Download archive
+  console "→ Downloading $PHOTO_ARCHIVE_NAME ($(numfmt --to=iec $PHOTO_ARCHIVE_SIZE 2>/dev/null || echo $PHOTO_ARCHIVE_SIZE) bytes)…"
 
-  eval "$cmd" 2>&1 | tee -a "$LOG_FILE"
+  local scp_cmd="scp -P $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY \
+    -o StrictHostKeyChecking=no \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=6 \
+    $archive_remote \
+    $archive_local"
 
-  log_result "✅ Sync completed"
+  log_cmd "Download archive" "$scp_cmd"
+
+  if eval "$scp_cmd" 2>&1 | tee -a "$LOG_FILE"; then
+    success "Archive downloaded"
+  else
+    error "Download failed"
+    exit 1
+  fi
+
+  # Extract archive
+  console "→ Extracting to $IMMICH_LIBRARY…"
+  local tar_cmd="tar -xzf $archive_local -C $IMMICH_LIBRARY"
+
+  log_cmd "Extract archive" "$tar_cmd"
+
+  if eval "$tar_cmd" 2>&1 | tee -a "$LOG_FILE"; then
+    success "Archive extracted"
+  else
+    error "Extraction failed"
+    exit 1
+  fi
+
+  # Cleanup
+  console "→ Cleaning up temporary files…"
+  rm -f "$archive_local"
+
+  log_result "✅ Download and extraction completed"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
