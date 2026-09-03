@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for Immich
+  postgres:
+    image: postgres:16-alpine
+    container_name: immich-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-immich}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-immich}
+      POSTGRES_DB: ${DB_NAME:-immich}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${DB_USER:-immich}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - immich-net
+
+  # Redis cache for Immich
+  redis:
+    image: redis:7-alpine
+    container_name: immich-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - immich-net
+
+  # Immich server (API + microservices)
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      DB_HOSTNAME: postgres
+      DB_USERNAME: ${DB_USER:-immich}
+      DB_PASSWORD: ${DB_PASSWORD:-immich}
+      DB_DATABASE_NAME: ${DB_NAME:-immich}
+      # Redis
+      REDIS_HOSTNAME: redis
+      REDIS_PORT: 6379
+      # Core settings
+      IMMICH_SERVER_URL: http://immich-server:3001
+      IMMICH_WEB_URL: http://immich-web:3000
+      # File storage location (on Hetzner: /donnees/immich/library)
+      IMMICH_UPLOAD_LOCATION: ${IMMICH_UPLOAD_LOCATION:-/immich/library}
+      # Memory & performance
+      JAVA_OPTS: -Xmx2g
+      # Logging
+      LOG_LEVEL: log
+    volumes:
+      - immich_library:/immich/library
+      - immich_upload:/immich/upload
+    ports:
+      - '3001:3001'
+    networks:
+      - immich-net
+
+  # Immich web frontend
+  immich-web:
+    image: ghcr.io/immich-app/immich-web:release
+    container_name: immich-web
+    restart: unless-stopped
+    environment:
+      PUBLIC_IMMICH_SERVER_URL: /api
+    ports:
+      - '3000:3000'
+    volumes:
+      - /dev/null:/etc/nginx/conf.d/default.conf
+    networks:
+      - immich-net
+    depends_on:
+      - immich-server
+
+  # Immich machine learning service
+  immich-ml:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich-ml
+    restart: unless-stopped
+    environment:
+      IMMICH_SERVER_URL: http://immich-server:3001
+      IMMICH_API_KEY: ${IMMICH_API_KEY:-}
+    volumes:
+      - model_cache:/cache
+    networks:
+      - immich-net
+    depends_on:
+      - immich-server
+
+volumes:
+  postgres_data:
+  redis_data:
+  immich_library:
+  immich_upload:
+  model_cache:
+
+networks:
+  immich-net:
+    driver: bridge

@@ -1,0 +1,51 @@
+# Surcharge de docker-compose.yml pour le serveur Hetzner.
+#
+# Usage :
+#   docker compose -f docker-compose.yml -f docker-compose.hetzner.yml up -d
+#
+# Les écarts avec le développement local :
+#
+# 1. Les données vivent sur /donnees (volume Hetzner attaché), et non dans
+#    des volumes Docker anonymes. Si le moteur Docker doit être recréé, la
+#    base et les photos survivent.
+#
+# 2. Le port 3001 du serveur API n'est plus publié : seul le reverse proxy
+#    (s'il y a) y accède. La web UI (port 3000) reste accessible.
+#
+# 3. Les volumes nommés du compose de base ne servent plus : tout est sur
+#    /donnees, mais ils sont déclarés pour que Compose reste satisfait.
+
+services:
+  postgres:
+    volumes: !override
+      - /donnees/immich/postgres:/var/lib/postgresql/data
+
+  redis:
+    volumes: !override
+      - /donnees/immich/redis:/data
+
+  immich-server:
+    # `!reset` et non `ports: []` : Compose ADDITIONNE les listes au lieu de
+    # les remplacer. Le port 3001 hérité resterait publié sans ce tag.
+    ports: !reset
+      - '3001:3001'
+    volumes: !override
+      - /donnees/immich/library:/immich/library
+      - /donnees/immich/upload:/immich/upload
+
+  immich-web:
+    # Accessible de l'extérieur sur 3000
+    ports: !override
+      - '3000:3000'
+
+  immich-ml:
+    volumes: !override
+      - /donnees/immich/ml-cache:/cache
+
+# Les volumes nommés du compose de base ne servent plus
+volumes:
+  postgres_data:
+  redis_data:
+  immich_library:
+  immich_upload:
+  model_cache:
