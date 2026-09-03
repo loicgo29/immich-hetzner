@@ -20,9 +20,13 @@ set -uo pipefail
 # ═══════════════════════════════════════════════════════════════════════════
 
 if [ -f .env.hetzner ]; then
-  export $(grep -v '^#' .env.hetzner | xargs)
+  set -a
+  source .env.hetzner
+  set +a
 elif [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
+  set -a
+  source .env
+  set +a
 else
   echo "❌ Fichier .env ou .env.hetzner non trouvé"
   exit 1
