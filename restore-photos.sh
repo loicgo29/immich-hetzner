@@ -166,12 +166,12 @@ calculate_checksums() {
 
   log_cmd "Storage Box Checksum" \
     "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST \
-      'find $STORAGE_BOX_DIR/immich-files -type f -exec sha256sum {} + | sort -k2'"
+      'find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2'"
 
   console "Computing SHA256 on Storage Box (this may take hours)…"
   ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" \
     "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" \
-    "find $STORAGE_BOX_DIR/immich-files -type f -exec sha256sum {} + | sort -k2" \
+    "find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2" \
     > "$CHECKSUMS_FILE" 2>&1
 
   success "Checksums saved to $CHECKSUMS_FILE"
@@ -193,7 +193,7 @@ sync_photos() {
         -o ServerAliveInterval=30 \
         -o ServerAliveCountMax=6 \
         -o TCPKeepAlive=yes' \
-    $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/immich-files/ \
+    $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR/ \
     $IMMICH_LIBRARY/"
 
   log_cmd "rsync Storage Box → Hetzner" "$cmd"
