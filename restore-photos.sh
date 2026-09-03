@@ -35,8 +35,10 @@ fi
 # Chemins
 NAS_USER="${NAS_USER:-backup}"
 NAS_HOST="${NAS_HOST:-192.168.1.40}"
-NAS_KEY="${HOME}/.ssh/backup-key"
+NAS_KEY="${NAS_SSH_KEY:-${HOME}/.ssh/backup-key}"
 NAS_PATH="/volume1/backup-6tb/NAS-LOGO-VOLUME/personnes/loic-perso/immich"
+
+STORAGE_BOX_KEY="${STORAGE_BOX_SSH_KEY:-${HOME}/.ssh/id_ed25519_storagebox}"
 
 IMMICH_LIBRARY="${IMMICH_UPLOAD_LOCATION:-.}/donnees/immich/library"
 IMMICH_TEMP="${IMMICH_LIBRARY}/.tmp"
