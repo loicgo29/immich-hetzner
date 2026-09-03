@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  # PostgreSQL database for Immich (with pgvector via TimescaleDB)
+  # PostgreSQL database for Immich (with pgvector)
   postgres:
-    image: timescaledb/timescaledb:latest-pg16
+    image: ankane/pgvector:16
     container_name: immich-postgres
     restart: unless-stopped
     environment:
