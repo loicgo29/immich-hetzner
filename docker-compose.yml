@@ -92,20 +92,6 @@ services:
     depends_on:
       - immich-server
 
-  # Simple reverse proxy for API routing (port 3000)
-  immich-api-proxy:
-    image: caddy:2-alpine
-    container_name: immich-api-proxy
-    restart: unless-stopped
-    ports:
-      - '3000:3000'
-    volumes:
-      - ./immich-caddyfile:/etc/caddy/Caddyfile:ro
-    networks:
-      - immich-net
-    depends_on:
-      - immich-web
-      - immich-server
 
   # Immich machine learning service
   immich-ml:
