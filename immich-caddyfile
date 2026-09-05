@@ -1,0 +1,11 @@
+:3000 {
+    handle /api/* {
+        reverse_proxy immich-server:2283 {
+            header_uri /api /* /
+        }
+    }
+
+    handle {
+        reverse_proxy immich-web:3000
+    }
+}

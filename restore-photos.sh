@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# restore-photos.sh — Restauration Immich avec logging complet
+# restore-photos.sh — Restauration Immich avec accès direct Storage Box
 #
-# Flux : DS124 NAS → Storage Box Hetzner → Hetzner /donnees/immich/library
+# Flux : DS124 NAS → Storage Box → Hetzner accède directement via SSHFS
 #
 # Étapes :
 #   1. test       — Vérifier connectivité NAS + Storage Box + Hetzner
 #   2. checksum   — Calculer SHA256 sur Storage Box
-#   3. sync       — rsync Storage Box → /donnees/immich/library
+#   3. sync       — Monter Storage Box via SSHFS (accès direct, pas téléchargement)
 #   4. verify     — Vérifier checksums + count fichiers
 #   5. all        — Exécuter toutes les étapes
 #
@@ -162,16 +162,16 @@ test_connectivity() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 calculate_checksums() {
-  console "Calculating checksums of files on NAS…"
+  console "Calculating checksums of files on Storage Box…"
 
-  log_cmd "NAS Checksums" \
-    "ssh -i $NAS_KEY $NAS_USER@$NAS_HOST \
-      'find $NAS_PATH -type f -exec sha256sum {} + | sort -k2'"
+  log_cmd "Storage Box Checksums" \
+    "ssh -p $STORAGE_BOX_PORT -i $STORAGE_BOX_KEY $STORAGE_BOX_USER@$STORAGE_BOX_HOST \
+      'find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2'"
 
-  console "Computing SHA256 on NAS (this may take hours)…"
-  ssh -i "$NAS_KEY" \
-    "$NAS_USER@$NAS_HOST" \
-    "find $NAS_PATH -type f -exec sha256sum {} + | sort -k2" \
+  console "Computing SHA256 on Storage Box (this may take hours)…"
+  ssh -p "$STORAGE_BOX_PORT" -i "$STORAGE_BOX_KEY" \
+    "$STORAGE_BOX_USER@$STORAGE_BOX_HOST" \
+    "find $STORAGE_BOX_DIR -type f -exec sha256sum {} + | sort -k2" \
     > "$CHECKSUMS_FILE" 2>&1
 
   success "Checksums saved to $CHECKSUMS_FILE"
@@ -184,24 +184,36 @@ calculate_checksums() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 sync_photos() {
-  console "Syncing photos from NAS DS124…"
+  console "Mounting Storage Box via SSHFS…"
 
   mkdir -p "$IMMICH_LIBRARY"
 
-  local cmd="rsync -av --progress --partial --append-verify --timeout=300 \
-    -e 'ssh -i $NAS_KEY \
-        -o StrictHostKeyChecking=no \
-        -o ServerAliveInterval=30 \
-        -o ServerAliveCountMax=6 \
-        -o TCPKeepAlive=yes' \
-    $NAS_USER@$NAS_HOST:$NAS_PATH/ \
-    $IMMICH_LIBRARY/"
+  # Install sshfs if needed
+  if ! command -v sshfs &> /dev/null; then
+    console "Installing sshfs…"
+    sudo apt-get update && sudo apt-get install -y sshfs
+  fi
 
-  log_cmd "rsync NAS DS124 → Hetzner" "$cmd"
+  # Mount Storage Box directly
+  local cmd="sshfs -o port=$STORAGE_BOX_PORT \
+                   -o IdentityFile=$STORAGE_BOX_KEY \
+                   -o StrictHostKeyChecking=no \
+                   -o ServerAliveInterval=30 \
+                   $STORAGE_BOX_USER@$STORAGE_BOX_HOST:$STORAGE_BOX_DIR \
+                   $IMMICH_LIBRARY"
+
+  log_cmd "Mount Storage Box → Hetzner (SSHFS)" "$cmd"
 
   eval "$cmd" 2>&1 | tee -a "$LOG_FILE"
 
-  log_result "✅ Sync completed"
+  if mountpoint -q "$IMMICH_LIBRARY"; then
+    success "Storage Box mounted at $IMMICH_LIBRARY (direct access)"
+    log_result "✅ Mount completed - photos accessible via SSHFS"
+  else
+    error "Mount failed"
+    log_result "❌ Mount failed"
+    exit 1
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -278,7 +290,7 @@ Usage: $0 {test|checksum|sync|verify|all}
 
   test       — Test connectivity to NAS, Storage Box, Hetzner
   checksum   — Calculate SHA256 checksums on Storage Box
-  sync       — rsync photos from Storage Box → /donnees/immich/library
+  sync       — Mount Storage Box via SSHFS (direct access, no download)
   verify     — Verify file count, disk usage, Immich health
   all        — Run all steps (can take many hours)
 
@@ -286,8 +298,14 @@ Logging:
   All commands logged to RESTORATION_LOG.md
   Checksums saved to checksums.txt
 
+Architecture:
+  Photos stored on Storage Box (3.4 TB)
+  Hetzner mounts them via SSHFS (no disk space needed)
+  Immich reads directly from mounted filesystem
+
 Examples:
   $0 test
+  $0 sync
   $0 all 2>&1 | tee console.log
 USAGE
     exit 1
