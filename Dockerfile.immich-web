@@ -1,0 +1,9 @@
+FROM ghcr.io/immich-app/immich-web:release
+
+# Copy init script that patches server URL at runtime
+COPY immich-web-init.sh /init.sh
+RUN chmod +x /init.sh
+
+# Override entrypoint to run our patch script
+ENTRYPOINT ["/init.sh", "/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]

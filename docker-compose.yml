@@ -78,13 +78,13 @@ services:
     networks:
       - immich-net
 
-  # Immich web frontend
+  # Immich web frontend (with runtime server URL patching)
   immich-web:
-    image: ghcr.io/immich-app/immich-web:release
+    build:
+      context: .
+      dockerfile: Dockerfile.immich-web
     container_name: immich-web
     restart: unless-stopped
-    environment:
-      PUBLIC_IMMICH_SERVER_URL: http://immich-server:2283
     networks:
       - immich-net
     depends_on:
