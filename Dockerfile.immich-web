@@ -1,9 +1,9 @@
 FROM ghcr.io/immich-app/immich-web:release
 
-# Copy init script that patches server URL at runtime
-COPY immich-web-init.sh /init.sh
-RUN chmod +x /init.sh
-
-# Override entrypoint to run our patch script
-ENTRYPOINT ["/init.sh", "/docker-entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
+# Fix hardcoded server URL in all JavaScript files
+# Replace old docker network address with correct hostname
+RUN find /app -name "*.js" -type f -exec sed -i \
+    -e 's|localhost:3001|immich-server:2283|g' \
+    -e 's|127\.0\.0\.1:3001|immich-server:2283|g' \
+    -e 's|172\.[0-9]\+\.[0-9]\+\.[0-9]\+:3001|immich-server:2283|g' \
+    {} +
