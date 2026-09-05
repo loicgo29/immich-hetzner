@@ -92,7 +92,7 @@ services:
 
   # Simple reverse proxy for API routing (port 3000)
   immich-api-proxy:
-    image: caddy:latest-alpine
+    image: caddy:2-alpine
     container_name: immich-api-proxy
     restart: unless-stopped
     ports:
