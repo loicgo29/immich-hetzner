@@ -25,13 +25,11 @@ services:
       - /donnees/immich/redis:/data
 
   immich-server:
-    # `!reset` et non `ports: []` : Compose ADDITIONNE les listes au lieu de
-    # les remplacer. Le port 3001 hérité resterait publié sans ce tag.
     ports: !reset
       - '3001:3001'
     volumes: !override
-      - /donnees/immich/library:/immich/library
-      - /donnees/immich/upload:/immich/upload
+      - immich_library:/immich/library
+      - immich_upload:/immich/upload
 
   immich-web:
     # Accessible de l'extérieur sur 3000
