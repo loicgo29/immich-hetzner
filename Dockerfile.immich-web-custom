@@ -5,11 +5,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Clone Immich repo (latest release tag)
+# Clone Immich repo and build web UI
 RUN apk add --no-cache git && \
     git clone --depth 1 --branch main https://github.com/immich-app/immich.git . && \
     cd web && \
-    npm ci
+    npm install
 
 # Build with correct PUBLIC_IMMICH_SERVER_URL
 ENV PUBLIC_IMMICH_SERVER_URL="http://immich-server:2283"
