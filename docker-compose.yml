@@ -46,7 +46,7 @@ services:
   immich-server:
     image: ghcr.io/immich-app/immich-server:release
     container_name: immich-server
-    restart: unless-stopped
+    restart: on-failure:5
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,8 +61,8 @@ services:
       # Redis
       REDIS_HOSTNAME: redis
       REDIS_PORT: 6379
-      # Core settings
-      IMMICH_SERVER_URL: http://immich-server:3001
+      # Core settings (Immich v3.1.0 uses port 2283 for internal API)
+      IMMICH_SERVER_URL: http://immich-server:2283
       IMMICH_WEB_URL: http://immich-web:3000
       # File storage location (on Hetzner: /donnees/immich/library)
       IMMICH_UPLOAD_LOCATION: ${IMMICH_UPLOAD_LOCATION:-/immich/library}
@@ -74,7 +74,7 @@ services:
       - immich_library:/immich/library
       - immich_upload:/immich/upload
     ports:
-      - '3001:3001'
+      - '3001:2283'
     networks:
       - immich-net
 
@@ -100,7 +100,7 @@ services:
     container_name: immich-ml
     restart: unless-stopped
     environment:
-      IMMICH_SERVER_URL: http://immich-server:3001
+      IMMICH_SERVER_URL: http://immich-server:2283
       IMMICH_API_KEY: ${IMMICH_API_KEY:-}
     volumes:
       - model_cache:/cache
