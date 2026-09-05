@@ -78,13 +78,15 @@ services:
     networks:
       - immich-net
 
-  # Immich web frontend (custom built with correct server URL)
+  # Immich web frontend (official image with custom nginx config)
   immich-web:
-    build:
-      context: .
-      dockerfile: Dockerfile.immich-web-custom
+    image: ghcr.io/immich-app/immich-web:release
     container_name: immich-web
     restart: unless-stopped
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./immich-web-nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - immich-net
     depends_on:
