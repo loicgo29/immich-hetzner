@@ -7,9 +7,11 @@ WORKDIR /app
 
 # Clone Immich repo and build web UI
 RUN apk add --no-cache git && \
+    npm install -g npm@latest && \
     git clone --depth 1 --branch main https://github.com/immich-app/immich.git . && \
     cd web && \
-    npm install
+    npm install && \
+    npm run build
 
 # Build with correct PUBLIC_IMMICH_SERVER_URL
 ENV PUBLIC_IMMICH_SERVER_URL="http://immich-server:2283"
