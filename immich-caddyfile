@@ -1,8 +1,6 @@
 :3000 {
     handle /api/* {
-        reverse_proxy immich-server:2283 {
-            header_uri /api /* /
-        }
+        reverse_proxy immich-server:2283
     }
 
     handle {
