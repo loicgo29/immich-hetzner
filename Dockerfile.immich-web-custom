@@ -1,0 +1,26 @@
+# Build immich-web with correct server URL
+# Based on: https://github.com/immich-app/immich/tree/main/web
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Clone Immich repo (latest release tag)
+RUN apk add --no-cache git && \
+    git clone --depth 1 --branch release https://github.com/immich-app/immich.git . && \
+    cd web && \
+    npm ci
+
+# Build with correct PUBLIC_IMMICH_SERVER_URL
+ENV PUBLIC_IMMICH_SERVER_URL="http://immich-server:2283"
+RUN cd web && npm run build
+
+# Production image (reuse official Immich nginx base if possible, or create minimal nginx)
+FROM nginx:alpine
+
+COPY --from=builder /app/web/build /usr/share/nginx/html
+COPY --from=builder /app/web/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+
+CMD ["nginx", "-g", "daemon off;"]
