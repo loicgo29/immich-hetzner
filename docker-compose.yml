@@ -74,7 +74,7 @@ services:
       - immich_library:/immich/library
       - immich_upload:/immich/upload
     ports:
-      - '3001:2283'
+      - '3010:2283'
     networks:
       - immich-net
 
