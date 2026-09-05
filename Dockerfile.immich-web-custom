@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Clone Immich repo (latest release tag)
 RUN apk add --no-cache git && \
-    git clone --depth 1 --branch release https://github.com/immich-app/immich.git . && \
+    git clone --depth 1 --branch main https://github.com/immich-app/immich.git . && \
     cd web && \
     npm ci
 
